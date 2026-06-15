@@ -1,10 +1,18 @@
-const LUMA_BASE = 'https://api.lumalabs.ai/dream-machine/v1';
+const LUMA_BASE = 'https://agents.lumalabs.ai/v1';
+
+export interface LumaOutputAsset {
+  type?: string;
+  url?: string;
+  download_url?: string;
+}
 
 export interface LumaGeneration {
   id: string;
-  state: 'queued' | 'dreaming' | 'completed' | 'failed';
-  failure_reason?: string;
-  assets?: { video?: string };
+  type?: string;
+  state: 'queued' | 'dreaming' | 'processing' | 'completed' | 'failed';
+  failure_reason?: string | null;
+  failure_code?: string | null;
+  output?: LumaOutputAsset[];
   created_at?: string;
 }
 
@@ -22,12 +30,13 @@ export async function startLumaGeneration(opts: {
   prompt: string;
   aspectRatio?: '9:16' | '16:9' | '1:1';
   duration?: '5s' | '9s';
-  model?: 'ray-2' | 'ray-flash-2' | 'ray-1-6';
+  model?: 'ray-3.2' | 'ray-2' | 'ray-flash-2';
   imageUrl?: string;
 }): Promise<LumaGeneration> {
   const body: Record<string, unknown> = {
     prompt: opts.prompt,
-    model: opts.model ?? 'ray-2',
+    model: opts.model ?? 'ray-3.2',
+    type: 'video',
     aspect_ratio: opts.aspectRatio ?? '9:16',
     duration: opts.duration ?? '5s',
     resolution: '720p',
@@ -61,4 +70,9 @@ export async function getLumaGeneration(id: string): Promise<LumaGeneration> {
     throw new Error(`Luma status failed (${res.status}): ${errText}`);
   }
   return (await res.json()) as LumaGeneration;
+}
+
+export function extractVideoUrl(gen: LumaGeneration): string | undefined {
+  const asset = gen.output?.[0];
+  return asset?.url ?? asset?.download_url;
 }

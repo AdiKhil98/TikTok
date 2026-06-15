@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getLumaGeneration } from '@/lib/luma';
+import { getLumaGeneration, extractVideoUrl } from '@/lib/luma';
 
 export const runtime = 'nodejs';
 
@@ -13,7 +13,7 @@ export async function GET(
     return NextResponse.json({
       id: gen.id,
       state: gen.state,
-      videoUrl: gen.assets?.video,
+      videoUrl: extractVideoUrl(gen),
       failureReason: gen.failure_reason,
     });
   } catch (err) {
