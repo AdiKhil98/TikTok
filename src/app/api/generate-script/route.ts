@@ -26,6 +26,17 @@ Bad vs good example (freeze-dried strawberry):
 - BAD: "הטעם האמיתי, כמוסה" (poetic-translated, unnatural)
 - GOOD: "טעם של תות אמיתי, בלי המים" (concrete, conversational)` : '';
 
+  const isFreezeDried = /freeze.?dried|תות.*קפוא|מיובש בהקפאה|פירות יבשים/i.test(input.product);
+  const freezeDriedRules = isFreezeDried ? `
+
+CRITICAL — Freeze-dried fruit visual accuracy (the brand is freeze-dried fruit, the visual must match the real product):
+- Fruit pieces must be WHOLE (whole strawberries, whole mango chunks, whole pineapple chunks). NOT thin slices, NOT cubes, NOT pre-cut.
+- UNCOATED. No chocolate, no yogurt coating, no sugar glaze, no powdered surface, no syrup. The fruit surface is exposed.
+- Texture: matte, porous, crystalline, dry, frosty edges. NEVER glossy, NEVER wet-looking, NEVER candy-like.
+- Slight hollow/honeycomb appearance when seen up close — the freeze-drying removes water.
+- Color is vivid but natural (the fruit's own color), not artificially saturated.
+- The Luma prompt MUST explicitly say "whole pieces", "uncoated", "matte porous dry texture" so the model does not default to glossy/coated.` : '';
+
   return `You are a senior TikTok creative director for short-form product marketing, writing for the ${input.language === 'he' ? 'Israeli' : 'global English-speaking'} market.
 
 Generate a complete script package for a single 8-second TikTok video.
@@ -33,7 +44,7 @@ Generate a complete script package for a single 8-second TikTok video.
 Product: ${input.product}
 Angle: ${input.angle}
 Visual style: ${input.style}
-Output language for hooks/VO/captions: ${input.language === 'he' ? 'Hebrew (native, not translated)' : 'English'}${refNote}${hebrewVoiceRules}
+Output language for hooks/VO/captions: ${input.language === 'he' ? 'Hebrew (native, not translated)' : 'English'}${refNote}${hebrewVoiceRules}${freezeDriedRules}
 
 Requirements:
 - 3 distinct hook variants (each <= 6 words, scroll-stopping, each takes a different angle)

@@ -68,6 +68,36 @@ export default function Home() {
   const [voError, setVoError] = useState<string | null>(null);
   const [generatingVo, setGeneratingVo] = useState(false);
 
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadTag, setUploadTag] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  async function uploadReference() {
+    if (!uploadFile) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', uploadFile);
+      if (uploadTag) fd.append('tag', uploadTag);
+      const res = await fetch('/api/media/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      await refreshMedia();
+      if (data.media?.id) {
+        if (data.media.media_type === 'image') setRefMediaId(data.media.id);
+        if (data.media.media_type === 'video') setSavedClipId(data.media.id);
+      }
+      setUploadFile(null);
+      setUploadTag('');
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function refreshMedia() {
     try {
       const res = await fetch('/api/media/list');
@@ -327,6 +357,45 @@ export default function Home() {
                 ))}
               </select>
             </Field>
+
+            <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-4">
+              <p className="text-sm font-medium mb-2">Quick upload — add a reference image or video</p>
+              <div className="grid gap-3 sm:grid-cols-[1fr_180px_auto] items-end">
+                <label className="block">
+                  <span className="text-xs text-zinc-500 block mb-1">File</span>
+                  <input
+                    type="file"
+                    accept="image/*,video/*"
+                    onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                    className="block w-full text-xs"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs text-zinc-500 block mb-1">Tag (optional)</span>
+                  <input
+                    value={uploadTag}
+                    onChange={(e) => setUploadTag(e.target.value)}
+                    placeholder="strawberry / mango"
+                    className="input text-sm"
+                  />
+                </label>
+                <button
+                  onClick={uploadReference}
+                  disabled={!uploadFile || uploading}
+                  className="rounded-md bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                >
+                  {uploading ? 'Uploading…' : 'Upload'}
+                </button>
+              </div>
+              {uploadError && (
+                <div className="mt-2 text-xs text-red-600 dark:text-red-400">{uploadError}</div>
+              )}
+              {uploadFile && !uploading && (
+                <div className="mt-2 text-xs text-zinc-500">
+                  Ready to upload: {uploadFile.name}
+                </div>
+              )}
+            </div>
 
             <button
               onClick={generateScript}
