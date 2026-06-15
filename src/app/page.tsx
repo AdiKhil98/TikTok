@@ -31,13 +31,16 @@ interface MediaItem {
   public_url: string;
   media_type: 'image' | 'video';
   tag: string | null;
+  notes?: string | null;
 }
 
 interface ClipState {
   id: string;
-  state: 'queued' | 'dreaming' | 'completed' | 'failed';
+  state: 'queued' | 'dreaming' | 'processing' | 'completed' | 'failed';
   videoUrl?: string;
-  failureReason?: string;
+  failureReason?: string | null;
+  saved?: boolean;
+  regenerating?: boolean;
 }
 
 export default function Home() {
@@ -54,6 +57,8 @@ export default function Home() {
   const [script, setScript] = useState<GeneratedScript | null>(null);
   const [selectedHook, setSelectedHook] = useState<number>(0);
 
+  const [clipCount, setClipCount] = useState<1 | 2>(1);
+  const [savedClipId, setSavedClipId] = useState<string>('');
   const [clips, setClips] = useState<ClipState[]>([]);
   const [clipsError, setClipsError] = useState<string | null>(null);
   const [generatingClips, setGeneratingClips] = useState(false);
@@ -63,12 +68,21 @@ export default function Home() {
   const [voError, setVoError] = useState<string | null>(null);
   const [generatingVo, setGeneratingVo] = useState(false);
 
+  async function refreshMedia() {
+    try {
+      const res = await fetch('/api/media/list');
+      const data = await res.json();
+      setMedia(data.media ?? []);
+    } catch {
+      // ignore
+    }
+  }
+
   useEffect(() => {
-    fetch('/api/media/list')
-      .then((r) => r.json())
-      .then((d) => setMedia(d.media ?? []))
-      .catch(() => {});
+    refreshMedia();
   }, []);
+
+  const savedClip = media.find((m) => m.id === savedClipId && m.media_type === 'video');
 
   async function generateScript() {
     setLoadingScript(true);
@@ -116,16 +130,15 @@ export default function Home() {
         body: JSON.stringify({
           prompt: script.lumaPrompt,
           imageUrl,
-          count: 2,
+          count: clipCount,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Luma start failed');
 
-      const initial: ClipState[] = data.generations.map((g: { id: string; state: ClipState['state'] }) => ({
-        id: g.id,
-        state: g.state,
-      }));
+      const initial: ClipState[] = data.generations.map(
+        (g: { id: string; state: ClipState['state'] }) => ({ id: g.id, state: g.state }),
+      );
       setClips(initial);
     } catch (e) {
       setClipsError(e instanceof Error ? e.message : 'Unknown error');
@@ -134,9 +147,64 @@ export default function Home() {
     }
   }
 
+  async function regenerateClip(index: number) {
+    if (!script) return;
+    setClips((prev) =>
+      prev.map((c, i) => (i === index ? { ...c, regenerating: true } : c)),
+    );
+    try {
+      const refMedia = media.find((m) => m.id === refMediaId);
+      const imageUrl = refMedia?.media_type === 'image' ? refMedia.public_url : undefined;
+      const res = await fetch('/api/luma/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: script.lumaPrompt, imageUrl, count: 1 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Luma start failed');
+      const newGen = data.generations[0];
+      setClips((prev) =>
+        prev.map((c, i) =>
+          i === index ? { id: newGen.id, state: newGen.state, regenerating: false } : c,
+        ),
+      );
+      if (selectedClipIdx === index) setSelectedClipIdx(null);
+    } catch (e) {
+      setClipsError(e instanceof Error ? e.message : 'Unknown error');
+      setClips((prev) =>
+        prev.map((c, i) => (i === index ? { ...c, regenerating: false } : c)),
+      );
+    }
+  }
+
+  async function saveClipToLibrary(index: number) {
+    const c = clips[index];
+    if (!c.videoUrl || c.saved) return;
+    try {
+      const label = `${product}_${Date.now()}`.replace(/\s+/g, '-');
+      const res = await fetch('/api/clips/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl: c.videoUrl,
+          label,
+          tag: 'generated',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Save failed');
+      setClips((prev) => prev.map((cl, i) => (i === index ? { ...cl, saved: true } : cl)));
+      await refreshMedia();
+    } catch (e) {
+      setClipsError(e instanceof Error ? e.message : 'Unknown error');
+    }
+  }
+
   useEffect(() => {
     if (clips.length === 0) return;
-    const pending = clips.some((c) => c.state !== 'completed' && c.state !== 'failed');
+    const pending = clips.some(
+      (c) => c.state !== 'completed' && c.state !== 'failed',
+    );
     if (!pending) return;
 
     const timer = setInterval(async () => {
@@ -147,7 +215,7 @@ export default function Home() {
             const res = await fetch(`/api/luma/status/${c.id}`);
             const data = await res.json();
             return {
-              id: c.id,
+              ...c,
               state: data.state ?? c.state,
               videoUrl: data.videoUrl,
               failureReason: data.failureReason,
@@ -187,6 +255,8 @@ export default function Home() {
       setGeneratingVo(false);
     }
   }
+
+  const savedVideos = media.filter((m) => m.media_type === 'video');
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
@@ -328,31 +398,91 @@ export default function Home() {
 
         {script && (
           <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 mb-8">
-            <SectionTitle>3. Video clips (Luma)</SectionTitle>
-            <p className="text-sm text-zinc-500 mb-4">
-              Generates 2 variants. Takes ~60–120 seconds. Each clip costs ~$0.40.
-            </p>
-            <button
-              onClick={generateClips}
-              disabled={generatingClips || clips.some((c) => c.state !== 'completed' && c.state !== 'failed')}
-              className="rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 font-medium disabled:opacity-50 hover:opacity-90"
-            >
-              {generatingClips ? 'Starting…' : 'Generate 2 clips'}
-            </button>
-            {clipsError && <ErrorBox>{clipsError}</ErrorBox>}
+            <SectionTitle>3. Video clip</SectionTitle>
 
-            {clips.length > 0 && (
-              <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {clips.map((c, i) => (
-                  <ClipCard
-                    key={c.id}
-                    clip={c}
-                    index={i}
-                    selected={selectedClipIdx === i}
-                    onSelect={() => setSelectedClipIdx(i)}
-                  />
+            <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-4 mb-5">
+              <p className="text-sm font-medium mb-2">Reuse a saved clip (free)</p>
+              <select
+                value={savedClipId}
+                onChange={(e) => {
+                  setSavedClipId(e.target.value);
+                  setClips([]);
+                  setSelectedClipIdx(null);
+                }}
+                className="input"
+              >
+                <option value="">— generate a new clip with Luma —</option>
+                {savedVideos.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.notes || m.filename}{m.tag ? ` · ${m.tag}` : ''}
+                  </option>
                 ))}
+              </select>
+            </div>
+
+            {savedClip ? (
+              <div className="mt-4">
+                <p className="text-sm text-zinc-500 mb-3">
+                  Using saved clip — no Luma cost. Skip ahead to voiceover.
+                </p>
+                <div className="aspect-[9/16] max-w-xs bg-zinc-100 dark:bg-zinc-800 rounded overflow-hidden">
+                  <video src={savedClip.public_url} controls className="w-full h-full object-cover" />
+                </div>
               </div>
+            ) : (
+              <>
+                <p className="text-sm text-zinc-500 mb-3">
+                  Generates with Luma ray-3.2. Each clip ≈ $0.40.
+                </p>
+
+                <div className="flex items-center gap-4 mb-4">
+                  <Field label="How many clips?">
+                    <div className="flex gap-2">
+                      {[1, 2].map((n) => (
+                        <button
+                          key={n}
+                          onClick={() => setClipCount(n as 1 | 2)}
+                          className={`px-3 py-1.5 rounded-md text-sm border ${
+                            clipCount === n
+                              ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 border-transparent'
+                              : 'border-zinc-300 dark:border-zinc-700'
+                          }`}
+                        >
+                          {n} clip{n > 1 ? 's' : ''} · ${(n * 0.4).toFixed(2)}
+                        </button>
+                      ))}
+                    </div>
+                  </Field>
+                </div>
+
+                <button
+                  onClick={generateClips}
+                  disabled={
+                    generatingClips ||
+                    clips.some((c) => c.state !== 'completed' && c.state !== 'failed')
+                  }
+                  className="rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 font-medium disabled:opacity-50 hover:opacity-90"
+                >
+                  {generatingClips ? 'Starting…' : `Generate ${clipCount} clip${clipCount > 1 ? 's' : ''}`}
+                </button>
+                {clipsError && <ErrorBox>{clipsError}</ErrorBox>}
+
+                {clips.length > 0 && (
+                  <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {clips.map((c, i) => (
+                      <ClipCard
+                        key={`${c.id}-${i}`}
+                        clip={c}
+                        index={i}
+                        selected={selectedClipIdx === i}
+                        onSelect={() => setSelectedClipIdx(i)}
+                        onRegenerate={() => regenerateClip(i)}
+                        onSave={() => saveClipToLibrary(i)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </section>
         )}
@@ -391,21 +521,26 @@ function ClipCard({
   index,
   selected,
   onSelect,
+  onRegenerate,
+  onSave,
 }: {
   clip: ClipState;
   index: number;
   selected: boolean;
   onSelect: () => void;
+  onRegenerate: () => void;
+  onSave: () => void;
 }) {
   const done = clip.state === 'completed' && clip.videoUrl;
   const failed = clip.state === 'failed';
+  const busy = clip.regenerating || (!done && !failed);
   return (
     <div
       className={`rounded-lg border p-3 ${selected ? 'border-zinc-900 dark:border-zinc-100' : 'border-zinc-200 dark:border-zinc-800'}`}
     >
       <div className="flex justify-between items-center mb-2">
         <span className="text-sm font-medium">Clip {index + 1}</span>
-        <span className="text-xs text-zinc-500">{clip.state}</span>
+        <span className="text-xs text-zinc-500">{clip.regenerating ? 'regenerating' : clip.state}</span>
       </div>
       <div className="aspect-[9/16] bg-zinc-100 dark:bg-zinc-800 rounded flex items-center justify-center overflow-hidden">
         {done ? (
@@ -417,11 +552,38 @@ function ClipCard({
         )}
       </div>
       {done && (
+        <div className="mt-3 space-y-2">
+          <button
+            onClick={onSelect}
+            className={`w-full text-sm rounded-md py-1.5 ${selected ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900' : 'bg-zinc-100 dark:bg-zinc-800'}`}
+          >
+            {selected ? '✓ Selected' : 'Select this clip'}
+          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={onSave}
+              disabled={clip.saved}
+              className="flex-1 text-xs rounded-md py-1.5 border border-zinc-300 dark:border-zinc-700 disabled:opacity-50"
+            >
+              {clip.saved ? '✓ Saved' : 'Save to library'}
+            </button>
+            <button
+              onClick={onRegenerate}
+              disabled={busy}
+              className="flex-1 text-xs rounded-md py-1.5 border border-zinc-300 dark:border-zinc-700 disabled:opacity-50"
+            >
+              Regenerate (~$0.40)
+            </button>
+          </div>
+        </div>
+      )}
+      {failed && (
         <button
-          onClick={onSelect}
-          className={`mt-3 w-full text-sm rounded-md py-1.5 ${selected ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900' : 'bg-zinc-100 dark:bg-zinc-800'}`}
+          onClick={onRegenerate}
+          disabled={busy}
+          className="mt-3 w-full text-xs rounded-md py-1.5 border border-zinc-300 dark:border-zinc-700"
         >
-          {selected ? '✓ Selected' : 'Select this clip'}
+          Retry (~$0.40)
         </button>
       )}
     </div>
