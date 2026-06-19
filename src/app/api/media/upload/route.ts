@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { compressVideo } from '@/lib/ffmpeg';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 180;
 
 const BUCKET = 'media';
+const COMPRESS_THRESHOLD = 45 * 1024 * 1024;
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,13 +30,23 @@ export async function POST(req: NextRequest) {
 
     const admin = supabaseAdmin();
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storagePath = `${Date.now()}_${safeName}`;
-    const arrayBuffer = await file.arrayBuffer();
+    let storagePath = `${Date.now()}_${safeName}`;
+    let uploadBody: ArrayBuffer | Buffer = await file.arrayBuffer();
+    let contentType = file.type;
+    let compressedFromBytes: number | undefined;
+
+    if (isVideo && file.size > COMPRESS_THRESHOLD) {
+      compressedFromBytes = file.size;
+      const compressed = await compressVideo(Buffer.from(uploadBody));
+      uploadBody = compressed;
+      contentType = 'video/mp4';
+      storagePath = storagePath.replace(/\.[^.]+$/, '') + '.mp4';
+    }
 
     const { error: uploadErr } = await admin.storage
       .from(BUCKET)
-      .upload(storagePath, arrayBuffer, {
-        contentType: file.type,
+      .upload(storagePath, uploadBody, {
+        contentType,
         upsert: false,
       });
 
@@ -62,7 +74,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `DB insert failed: ${insertErr.message}` }, { status: 500 });
     }
 
-    return NextResponse.json({ media: row });
+    return NextResponse.json({
+      media: row,
+      compressed: compressedFromBytes
+        ? {
+            originalBytes: compressedFromBytes,
+            finalBytes: Buffer.isBuffer(uploadBody) ? uploadBody.length : uploadBody.byteLength,
+          }
+        : undefined,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: msg }, { status: 500 });

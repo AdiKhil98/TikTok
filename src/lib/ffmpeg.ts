@@ -79,6 +79,35 @@ async function runFfmpeg(workDir: string, args: string[]): Promise<void> {
   });
 }
 
+export async function compressVideo(
+  input: Buffer,
+  opts: { crf?: number } = {},
+): Promise<Buffer> {
+  const work = await mkdtemp(path.join(tmpdir(), 'vf-cmp-'));
+  try {
+    const inPath = path.join(work, 'in.mp4');
+    const outPath = path.join(work, 'out.mp4');
+    await writeFile(inPath, input);
+
+    const args = [
+      '-y',
+      '-i', 'in.mp4',
+      '-c:v', 'libx264',
+      '-crf', String(opts.crf ?? 26),
+      '-preset', 'fast',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-movflags', '+faststart',
+      'out.mp4',
+    ];
+
+    await runFfmpeg(work, args);
+    return await readFile(outPath);
+  } finally {
+    rm(work, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export interface BuildVideoOptions {
   clipUrl: string;
   voAudio: Buffer;

@@ -91,9 +91,15 @@ export default function MediaPage() {
               <input
                 value={tag}
                 onChange={(e) => setTag(e.target.value)}
+                list="media-tag-suggestions"
                 placeholder="strawberry / mango / packaging"
                 className="input"
               />
+              <datalist id="media-tag-suggestions">
+                {Array.from(new Set(items.map((i) => i.tag).filter(Boolean))).map((t) => (
+                  <option key={t!} value={t!} />
+                ))}
+              </datalist>
             </label>
             <label className="block sm:col-span-2">
               <span className="text-sm font-medium block mb-1.5">Notes (optional)</span>

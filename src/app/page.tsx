@@ -423,9 +423,15 @@ export default function Home() {
                   <input
                     value={uploadTag}
                     onChange={(e) => setUploadTag(e.target.value)}
+                    list="upload-tag-suggestions"
                     placeholder="strawberry / mango"
                     className="input text-sm"
                   />
+                  <datalist id="upload-tag-suggestions">
+                    {Array.from(new Set(media.map((m) => m.tag).filter(Boolean))).map((t) => (
+                      <option key={t!} value={t!} />
+                    ))}
+                  </datalist>
                 </label>
                 <button
                   onClick={uploadReference}
