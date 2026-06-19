@@ -68,6 +68,10 @@ export default function Home() {
   const [voError, setVoError] = useState<string | null>(null);
   const [generatingVo, setGeneratingVo] = useState(false);
 
+  const [finalUrl, setFinalUrl] = useState<string | null>(null);
+  const [finalError, setFinalError] = useState<string | null>(null);
+  const [buildingFinal, setBuildingFinal] = useState(false);
+
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadTag, setUploadTag] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -260,6 +264,50 @@ export default function Home() {
 
     return () => clearInterval(timer);
   }, [clips]);
+
+  function selectedClipUrl(): string | null {
+    if (savedClip) return savedClip.public_url;
+    if (selectedClipIdx !== null) {
+      const c = clips[selectedClipIdx];
+      return c?.videoUrl ?? null;
+    }
+    return null;
+  }
+
+  async function buildFinal() {
+    if (!script) return;
+    const clipUrl = selectedClipUrl();
+    if (!clipUrl) {
+      setFinalError('Pick a clip first (generated or saved).');
+      return;
+    }
+    setBuildingFinal(true);
+    setFinalError(null);
+    setFinalUrl(null);
+    try {
+      const res = await fetch('/api/build-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clipUrl,
+          hook: script.hooks[selectedHook],
+          voScript: script.voScript,
+          captions: script.captions,
+          language,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Build failed');
+      }
+      const blob = await res.blob();
+      setFinalUrl(URL.createObjectURL(blob));
+    } catch (e) {
+      setFinalError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setBuildingFinal(false);
+    }
+  }
 
   async function generateVo() {
     if (!script) return;
@@ -558,7 +606,7 @@ export default function Home() {
 
         {script && (
           <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 mb-8">
-            <SectionTitle>4. Voiceover (ElevenLabs)</SectionTitle>
+            <SectionTitle>4. Voiceover preview (optional)</SectionTitle>
             <p className="text-sm text-zinc-500 mb-4">
               Uses selected hook + VO script. Multilingual v2 model.
             </p>
@@ -575,6 +623,39 @@ export default function Home() {
                 <audio src={voUrl} controls className="w-full" />
                 <a href={voUrl} download="voiceover.mp3" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 mt-2 inline-block">
                   Download MP3
+                </a>
+              </div>
+            )}
+          </section>
+        )}
+
+        {script && (
+          <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 mb-8">
+            <SectionTitle>5. Build final video</SectionTitle>
+            <p className="text-sm text-zinc-500 mb-4">
+              Stitches the selected clip with voiceover and burned-in captions into a 1080×1920 MP4 ready for TikTok.
+              Local FFmpeg, ~10–20s.
+            </p>
+            {!selectedClipUrl() && (
+              <p className="text-sm text-amber-600 dark:text-amber-400 mb-3">
+                Pick a clip first (generate a new one above or select a saved clip).
+              </p>
+            )}
+            <button
+              onClick={buildFinal}
+              disabled={buildingFinal || !selectedClipUrl()}
+              className="rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 font-medium disabled:opacity-50 hover:opacity-90"
+            >
+              {buildingFinal ? 'Building…' : 'Build final video'}
+            </button>
+            {finalError && <ErrorBox>{finalError}</ErrorBox>}
+            {finalUrl && (
+              <div className="mt-4">
+                <div className="aspect-[9/16] max-w-xs bg-zinc-100 dark:bg-zinc-800 rounded overflow-hidden">
+                  <video src={finalUrl} controls className="w-full h-full object-cover" />
+                </div>
+                <a href={finalUrl} download="tiktok.mp4" className="mt-3 inline-block rounded-md bg-zinc-100 dark:bg-zinc-800 px-4 py-2 text-sm font-medium">
+                  ⬇ Download MP4
                 </a>
               </div>
             )}
